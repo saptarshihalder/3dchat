@@ -1,0 +1,65 @@
+/* 3D algorithm and code by mrHackman using firebase */
+#online {
+position: absolute;
+left: 0;
+top: 30px;
+}
+
+canvas {
+position: absolute;
+left: 0;
+top: 0;
+}
+
+h1 {
+position: absolute;
+color: white;
+width: 300px;
+left: 50%;
+margin-left: -150px;
+margin-top: 0px;
+padding: 0px'
+}
+
+body {
+color: white;
+margin: 0;
+overflow: hidden;
+text-align: center;
+-moz-user-select: -moz-none;
+-khtml-user-select: none;
+-webkit-user-select: none;
+-ms-user-select: none;
+user-select: none;
+}
+
+.btn {
+border: thick solid white;
+display: inline-block;
+width: 35px;
+height: 35px;
+}
+
+#online {
+color: green;
+}
+
+#something {
+position: absolute;
+width: 300px;
+bottom: 0;
+left: 50%;
+margin-left:-150px;
+}
+
+#WASD-container {
+margin: 0;
+text-align: center;
+float: left;
+}
+
+#arrow-container {
+margin: 0;
+text-align: center;
+float: right;
+}

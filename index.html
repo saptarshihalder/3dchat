@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en" >
+<head>
+  <meta charset="UTF-8">
+  <title>3d chat</title>
+  <link rel="stylesheet" href="./style.css">
+
+</head>
+<body>
+<!-- partial:index.partial.html -->
+<!--3D algorithm and code by mrHackman using firebase-->
+
+<!DOCTYPE html>
+<html lang=en dir=ltr>
+  <head>
+    <meta charset=utf-8>
+    <title></title>
+    <script src="https://www.gstatic.com/firebasejs/7.12.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/7.12.0/firebase-database.js"></script>
+  </head>
+  <body>
+    <canvas id=canvas></canvas>
+    <canvas id=text></canvas>
+    <h1>My Lobby</h1>
+    <span id=online>sdkfvj</span>
+    <div id=something>
+      <span id=WASD-container>
+        <div><span class=btn id=W>W</span></div>
+        <div><span class=btn id=A>A</span><span class=btn id=S>S</span><span class=btn id=D>D</span></div>
+      </span>
+      <span id=arrow-container>
+        <div><span class=btn id=up>↑</span></div>
+        <div><span class=btn id=left>←</span><span class=btn id=down>↓</span><span class=btn id=right>→</span></div>
+      </span>
+      <input type="text" id="msg" placeholder="Send out a message"><button type="button" onclick="send()">Send message</button>
+    </div>
+    <script type=text/javascript name="lobber148's 3D Graphics Library">
+// Your web app's Firebase configuration
+var firebaseConfig = {
+  apiKey: "AIzaSyCJYb7jz0lcf3No3rzQD6JptwxrEDHDJ9M",
+  authDomain: "first-project-db655.firebaseapp.com",
+  databaseURL: "https://first-project-db655.firebaseio.com",
+  projectId: "first-project-db655",
+  storageBucket: "first-project-db655.appspot.com",
+  messagingSenderId: "574749895369",
+  appId: "1:574749895369:web:5ada447a4673f03aa4bb18"
+};
+// Initialize Firebase
+firebase.initializeApp(firebaseConfig);
+var database = firebase.database();
+var user_id = ""+parseInt(Math.random()*100);
+var name_id = "Name"+user_id
+var dict = {};
+
+class Camera {
+  constructor(position=[Math.round(Math.random()*1000)/100, Math.round(Math.random()*1000)/100, Math.round(Math.random()*1000)/100], axes=[[0, 1, 0], [0, 0, -1], [-1, 0, 0]], focal_length=2, move_speed=.2, rot_speed=.05) {
+    this.position = position;
+    this.axes = axes;  // [[right], [down], [forward]]
+    this.focal_length = focal_length;
+    this.move_speed = move_speed;
+    this.rot_speed = rot_speed;
+    this.a = Math.cos(this.rot_speed);
+    this.b = Math.sin(this.rot_speed);
+  }
+  matrix() {
+    return inverse(transpose(this.axes));
+  }
+  shift(dir) {
+    this.position = v_add_v(this.position, dir);
+  }
+  rotate_ki(n) {
+    var temp_k = v_add_v(s_mult_v(n?this.a:1, this.axes[2]), s_mult_v(n*this.b, this.axes[0]));
+    this.axes[0] = v_add_v(s_mult_v(n?this.a:1, this.axes[0]), s_mult_v(n*this.b, s_mult_v(-1, this.axes[2])));
+    this.axes[2] = temp_k;
+  }
+  rotate_jk(n) {
+    var temp_j = v_add_v(s_mult_v(n?this.a:1, this.axes[1]), s_mult_v(n*this.b, this.axes[2]));
+    this.axes[2] = v_add_v(s_mult_v(n?this.a:1, this.axes[2]), s_mult_v(n*this.b, s_mult_v(-1, this.axes[1])));
+    this.axes[1] = temp_j;
+  }
+  rotate_ji(n) {
+    var temp_j = v_add_v(s_mult_v(n?this.a:1, this.axes[1]), s_mult_v(n*this.b, this.axes[0]));
+    this.axes[0] = v_add_v(s_mult_v(n?this.a:1, this.axes[0]), s_mult_v(n*this.b, s_mult_v(-1, this.axes[1])));
+    this.axes[1] = temp_j;
+  }
+  send_values_to_shader() {
+    gl.uniformMatrix3fv(matrix_location, false, flatten(this.matrix()));
+    gl.uniform3fv(camera_location, this.position);
+    gl.uniform1f(f_location, this.focal_length);
+  }
+}
+
+function gl_setup() {
+  this.canvas = document.getElementById("canvas");
+  gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.enable(gl.DEPTH_TEST);
+  this.vs_source =
+`
+precision mediump float;
+attribute vec3 vert_pos;
+attribute vec3 vert_color;
+varying vec3 frag_color;
+uniform mat3 u_matrix;
+uniform vec3 u_camera;
+uniform float f;
+uniform float w_h;
+vec3 proj3Dto2D(vec3 vp) {
+  vec3 new = vp*u_matrix;
+  float p = f/(new.z+f);
+  if (new.z >= 0.0) {
+    return vec3(new.x*p, -new.y*p*w_h, new.z*0.002);
+  }
+  return vec3(new.x*p, -new.y*p*w_h, new.z-1.0);
+}
+void main() {
+  frag_color = vert_color;
+  gl_Position = vec4(proj3Dto2D(vert_pos-u_camera), 1.0);
+}
+`
+  this.fs_source =
+`
+precision mediump float;
+varying vec3 frag_color;
+void main() {
+  gl_FragColor = vec4(frag_color, 1.0);
+}
+`
+  this.program = prgm(vs_source, fs_source);
+  this.matrix_location = gl.getUniformLocation(program, "u_matrix");
+  this.camera_location = gl.getUniformLocation(program, "u_camera");
+  this.f_location = gl.getUniformLocation(program, "f");
+  this.w_f_location = gl.getUniformLocation(program, "w_h");
+  this.w_h = canvas.width/canvas.height;
+  gl.uniform1f(w_f_location, w_h);
+  vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  pal = gl.getAttribLocation(program, 'vert_pos');
+  cal = gl.getAttribLocation(program, 'vert_color');
+  gl.vertexAttribPointer(
+    pal,
+    3,
+    gl.FLOAT,
+    gl.FALSE,
+    6*Float32Array.BYTES_PER_ELEMENT,  // Size of individual vertex
+    0  // Offset
+  );
+  gl.enableVertexAttribArray(pal);
+
+  gl.vertexAttribPointer(
+    cal,
+    3,
+    gl.FLOAT,
+    gl.FALSE,
+    6*Float32Array.BYTES_PER_ELEMENT,  // Size of individual vertex
+    3*Float32Array.BYTES_PER_ELEMENT  // Offset
+  );
+  gl.enableVertexAttribArray(cal);
+}
+
+function prgm(vs_source, fs_source) {
+  vs = gl.createShader(gl.VERTEX_SHADER);
+  fs = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(vs, vs_source);
+  gl.shaderSource(fs, fs_source);
+  gl.compileShader(vs);
+  gl.compileShader(fs);
+  program = gl.createProgram();
+  gl.attachShader(program, vs);
+  gl.attachShader(program, fs);
+  gl.linkProgram(program);
+  gl.useProgram(program);
+  return program;
+}
+
+function add_vertices(vertices) {
+  gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+}
+
+function write_data(val, key=user_id) {
+  dict[key] = val;
+  database.ref("User").update(dict);
+}
+
+function read_data() {
+  database.ref("/").once("value", function(snapshot) {
+    snapshot.forEach(function(childSnapshot) {
+      this.values = childSnapshot.val();
+    });
+  });
+  return this.values;
+}
+
+function inverse(mat3) {
+  var minors = [[], [], []];
+  var cofactors = [[], [], []];
+  var adjugate = [[], [], []];
+  var count = [0, 1, 2];
+  for (i of count) {
+    for (j of count) {
+      var vals = [];
+      for (k of count.filter(n => n!==i)) {
+        for (l of count.filter(n => n!==j)) {
+          vals.push(mat3[k][l]);
+        }
+      }
+      minors[i][j] = vals[0]*vals[3]-vals[1]*vals[2];
+      cofactors[i][j] = minors[i][j]*(i+j&1?-1:1);
+      adjugate[j][i] = cofactors[i][j];
+    }
+  }
+  return adjugate.map(arr => arr.map(n => n/(mat3[0][0]*minors[0][0]-mat3[0][1]*minors[0][1]+mat3[0][2]*minors[0][2])));
+}
+
+function transpose(mat3) {
+  return [
+    [mat3[0][0], mat3[1][0], mat3[2][0]],
+    [mat3[0][1], mat3[1][1], mat3[2][1]],
+    [mat3[0][2], mat3[1][2], mat3[2][2]]
+  ];
+}
+
+function cross(a, b) {
+  return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+}
+
+function flatten(mat) {
+  return mat.flat(1);
+}
+
+function v_add_v(a, b) {
+  sum = [];
+  for (var i = 0; i < a.length; i++) {
+    sum.push(a[i]+b[i])
+  }
+  return sum;
+}
+
+function s_mult_v(a, b) {
+  return b.map(n => a*n);
+}
+
+function m_mult_v(m, v) {
+  out = [];
+  for (var i = 0; i < m.length; i++) {
+    var sum = 0;
+    for (var j = 0; j < m.length; j++) {
+      sum += m[i][j]*v[j];
+    }
+    out.push(sum);
+  }
+  return out;
+}
+
+function quads_to_triangles(quads) {
+  triangles = [];
+  for (var i = 0; i < quads.length; i+=4) {
+    triangles = triangles.concat([quads[i]]).concat([quads[i+1]]).concat([quads[i+2]]).concat([quads[i]]).concat([quads[i+3]]).concat([quads[i+2]]);
+  }
+  return flatten(triangles);
+}
+
+function update_scene(locations) {
+  var quads = [
+    [.5, -.5, -1, 1, 0, 0],
+    [.5, .5, -1, 0, 1, 0],
+    [.5, .5, 0, 0, 0, 1],
+    [.5, -.5, 0, 1, 0, 0],
+    [.5, -.5, -1, 1, 0, 0],
+    [-.5, -.5, -1, 1, 0, 0],
+    [-.5, -.5, 0, 1, 0, 0],
+    [.5, -.5, 0, 1, 0, 0],
+    [.5, -.5, -1, 1, 0, 0],
+    [.5, .5, -1, 0, 1, 0],
+    [-.5, .5, -1, 0, 1, 0],
+    [-.5, -.5, -1, 1, 0, 0],
+    [.5, -.5, 0, 1, 0, 0],
+    [.5, .5, 0, 0, 0, 1],
+    [-.5, .5, 0, 0, 0, 1],
+    [-.5, -.5, 0, 1, 0, 0],
+    [-.5, -.5, -1, 1, 0, 0],
+    [-.5, .5, -1, 0, 1, 0],
+    [-.5, .5, 0, 0, 0, 1],
+    [-.5, -.5, 0, 1, 0, 0],
+    [.5, .5, -1, 0, 1, 0],
+    [-.5, .5, -1, 0, 1, 0],
+    [-.5, .5, 0, 0, 0, 1],
+    [.5, .5, 0, 0, 0, 1]
+  ];
+  var temp = [];
+  this.temp_text = [];
+  var connected = 0;
+  for (id in locations) {
+    if (id !== user_id && !id.match('Name') && !id.match('online')) {
+      var location = locations[id].split(",").map(parseFloat).concat([0, 0, 0]);
+      for (var i = 0; i < 24; i++) {
+        temp.push(v_add_v(location, quads[i]));
+      }
+    } else if (!id.match(user_id) && id.match('Name') && !id.match('online')) {
+      try {
+        var location = locations[id.slice(4)].split(",").map(parseFloat);
+        temp_text.push([location, locations[id], locations["online"+id.slice(4)]]);
+      }
+      catch(err) {}
+    } else if (id.match('online')) {
+      connected += parseInt(locations[id]);
+    }
+  }
+  document.getElementById("online").textContent = "#Users online: "+connected;
+  vertices = new Float32Array(quads_to_triangles(temp));
+  add_vertices(vertices);
+}
+
+function send() {
+  write_data(name+": "+document.getElementById("msg").value.slice(0, 40), name_id);
+  document.getElementById("msg").value = ""
+}
+
+function setup_text_canvas() {
+  this.text = document.getElementById("text");
+  text.width = window.innerWidth;
+  text.height = window.innerHeight;
+  this.ctx = text.getContext("2d");
+  ctx.textAlign = "center";
+}
+
+function remove(id) {
+  database.ref("User/"+id).remove();
+  database.ref("User/Name"+id).remove();
+  database.ref("User/online"+id).remove()
+}
+    </script>
+  </body>
+</html>
+<!-- partial -->
+  <script  src="./script.js"></script>
+
+</body>
+</html>
