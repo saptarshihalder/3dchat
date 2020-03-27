@@ -26,4 +26,4 @@ Only one room for now: MY LOBBY. Next Updates will come soon.
   
   ### SPECIAL THANKS TO Repl.it for free HOSTING.
   
-   https://Chat.mrhackman.repl.co is the link to enjoy.
+   https://Chat.mrhackman.repl.co is the link to enjoy. 
