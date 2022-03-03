@@ -22,7 +22,7 @@ Only one room for now: MY LOBBY. Next Updates will come soon.
   free textboxes to share your thoughts in the time of COVID-19 self quarantine.
   ## -------------------------------------------------------------------------------------------------------
   
-   # HEY, LISTEN <img src="https://i.gifer.com/origin/06/0670f60764edb92eb83de60e737a0254_w200.gif" width="70px">
+   # HEY, LISTEN <img src="https://i.gifer.com/origin/06/0670f60764edb92eb83de60e737a0254_w200.gif" width="100px">
    Its been quite sometime since I made this crap. So, I would like to let you know that this website doesn't clear your chats, in other words everthing ever written in this website by people remains here. From me typing **test** in 2019 to some random guy typing random words in chat recently, you can see everything someone every typed here and it will be there forever, so there is no security for NSFW links/ racist chats etc. and well if you end up typing your vital details, well I won't be responsible for that 😅. So I mean, just be ***CAREFUL!!*** thats it. :)
   
   # STAY TUNED FOR MORE UPDATES.
