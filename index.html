@@ -2,57 +2,56 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0c1018">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#05080d">
   <title>3D Chat — My Lobby</title>
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <div id="world"></div>
+  <canvas id="canvas"></canvas>
+  <canvas id="text"></canvas>
 
-  <div id="hud">
-    <div class="brand">
-      <strong>My Lobby</strong>
-      <span id="online">1 online</span>
+  <header id="hud">
+    <div>
+      <h1>My Lobby</h1>
+      <span id="online">1 user online</span>
     </div>
-    <div id="network">starting world…</div>
-  </div>
+    <span id="engine">custom WebGL engine · no 3D library</span>
+  </header>
 
-  <div id="help">WASD move · arrows turn/look · drag to look · Enter to chat</div>
+  <div id="network">local world</div>
+  <div id="crosshair">+</div>
 
-  <div id="chat-panel">
-    <div id="chat-log" aria-live="polite"></div>
-    <form id="chat-form" autocomplete="off">
-      <input id="msg" maxlength="120" placeholder="Say something…" aria-label="Chat message">
+  <section id="chatbox">
+    <div id="messages"></div>
+    <form id="chat-form">
+      <input id="msg" maxlength="100" autocomplete="off" placeholder="Send out a message">
       <button type="submit">Send</button>
     </form>
+  </section>
+
+  <div id="controls">
+    <div class="pad">
+      <button data-key="87">W</button>
+      <div><button data-key="65">A</button><button data-key="83">S</button><button data-key="68">D</button></div>
+    </div>
+    <div class="pad">
+      <button data-key="38">↑</button>
+      <div><button data-key="37">←</button><button data-key="40">↓</button><button data-key="39">→</button></div>
+    </div>
   </div>
 
-  <div id="touch-controls" aria-hidden="true">
-    <div class="pad movement">
-      <button data-key="KeyW">W</button>
-      <span><button data-key="KeyA">A</button><button data-key="KeyS">S</button><button data-key="KeyD">D</button></span>
-    </div>
-    <div class="pad camera">
-      <button data-key="ArrowUp">↑</button>
-      <span><button data-key="ArrowLeft">←</button><button data-key="ArrowDown">↓</button><button data-key="ArrowRight">→</button></span>
-    </div>
-  </div>
-
-  <div id="join-screen">
-    <div class="join-card">
-      <div class="eyebrow">3D CHAT · 2020 → NOW</div>
-      <h1>Enter My Lobby</h1>
-      <p>A tiny browser metaverse. Walk around, meet whoever is here, and talk in the room.</p>
-      <label for="name">Your name</label>
-      <input id="name" maxlength="24" placeholder="Guest">
-      <button id="enter" type="button">Enter lobby</button>
-      <small>No account. The world works locally; multiplayer connects peer-to-peer when available.</small>
+  <div id="join">
+    <div class="card">
+      <small>3D CHAT · BUILT FROM SCRATCH</small>
+      <h2>Enter My Lobby</h2>
+      <p>The original handmade WebGL world — no Three.js, no 3D engine.</p>
+      <input id="name" maxlength="24" placeholder="Your name">
+      <button id="enter">Enter lobby</button>
     </div>
   </div>
 
   <div id="fatal" hidden></div>
-
-  <script type="module" src="./script.js"></script>
+  <script src="./script.js"></script>
 </body>
 </html>

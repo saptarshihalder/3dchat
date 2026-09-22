@@ -1,486 +1,561 @@
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js';
+// 3D algorithm and code by mrHackman / Saptarshi Halder
+// No 3D libraries. The camera, projection, matrices and geometry are handwritten WebGL.
 
-const $ = s => document.querySelector(s);
-const world = $('#world');
-const onlineEl = $('#online');
-const networkEl = $('#network');
-const joinScreen = $('#join-screen');
-const nameInput = $('#name');
-const enterButton = $('#enter');
-const chatForm = $('#chat-form');
-const chatInput = $('#msg');
-const chatLog = $('#chat-log');
-const fatal = $('#fatal');
+var canvas, text, ctx, gl, program, vbo, pal, cal;
+var matrix_location, camera_location, f_location, w_h_location, w_h;
+var camera, vertices = new Float32Array([]);
+var down = Array(1000).fill(0);
+var frame = 1;
+var entered = false;
+var user_id = (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
+var name = "";
+var peers = {};
+var temp_text = [];
+var static_vertices = [];
+var channel = null;
+var room = new URLSearchParams(location.search).get("room") || "main-lobby";
+var p2pRoom = null, p2pState = null, p2pChat = null, p2pHello = null;
+var transportToUser = {};
+var lastSend = 0;
+var lastHeartbeat = 0;
 
-let entered = false;
-let displayName = localStorage.getItem('3dchat-name') || '';
-nameInput.value = displayName;
-
-const clientId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now();
-const roomId = new URLSearchParams(location.search).get('room') || 'main-lobby';
-const keys = new Set();
-const peers = new Map();
-const transportToClient = new Map();
-const seenMessages = new Set();
-let p2p = null;
-let p2pState = null;
-let p2pProfile = null;
-let p2pChat = null;
-let cameraYaw = Math.PI;
-let cameraPitch = 0.34;
-let cameraDistance = 7.5;
-let lastStateSent = 0;
-let lastHeartbeat = 0;
-let pointerDown = false;
-let lastPointerX = 0;
-let lastPointerY = 0;
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0b1220);
-scene.fog = new THREE.Fog(0x0b1220, 38, 92);
-
-const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.08, 180);
-camera.position.set(0, 5, 8);
-
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
-renderer.setSize(innerWidth, innerHeight);
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-world.appendChild(renderer.domElement);
-
-scene.add(new THREE.HemisphereLight(0xbddcff, 0x1a2030, 1.8));
-const sun = new THREE.DirectionalLight(0xffffff, 2.2);
-sun.position.set(12, 24, 8);
-sun.castShadow = true;
-sun.shadow.mapSize.set(1024, 1024);
-sun.shadow.camera.left = -35;
-sun.shadow.camera.right = 35;
-sun.shadow.camera.top = 35;
-sun.shadow.camera.bottom = -35;
-scene.add(sun);
-
-const floor = new THREE.Mesh(
-  new THREE.PlaneGeometry(100, 100),
-  new THREE.MeshStandardMaterial({ color: 0x182231, roughness: 0.92, metalness: 0.02 })
-);
-floor.rotation.x = -Math.PI / 2;
-floor.receiveShadow = true;
-scene.add(floor);
-
-const grid = new THREE.GridHelper(100, 100, 0x507195, 0x26384e);
-grid.position.y = 0.012;
-scene.add(grid);
-
-const plaza = new THREE.Mesh(
-  new THREE.CylinderGeometry(11, 11, 0.22, 64),
-  new THREE.MeshStandardMaterial({ color: 0x25374d, roughness: 0.78 })
-);
-plaza.position.y = 0.11;
-plaza.receiveShadow = true;
-scene.add(plaza);
-
-function box(x, y, z, sx, sy, sz, color) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), new THREE.MeshStandardMaterial({ color, roughness: 0.72 }));
-  m.position.set(x, y + sy / 2, z);
-  m.castShadow = true;
-  m.receiveShadow = true;
-  scene.add(m);
-  return m;
+class Camera {
+  constructor(position=[8, 0, 0.35], axes=[[0, 1, 0], [0, 0, -1], [-1, 0, 0]], focal_length=2, move_speed=.11, rot_speed=.035) {
+    this.position = position;
+    this.axes = axes;
+    this.focal_length = focal_length;
+    this.move_speed = move_speed;
+    this.rot_speed = rot_speed;
+    this.a = Math.cos(this.rot_speed);
+    this.b = Math.sin(this.rot_speed);
+  }
+  matrix() {
+    return inverse(transpose(this.axes));
+  }
+  shift(dir) {
+    this.position = v_add_v(this.position, dir);
+    this.position[0] = clamp(this.position[0], -42, 42);
+    this.position[1] = clamp(this.position[1], -42, 42);
+  }
+  rotate_ki(n) {
+    var temp_k = v_add_v(s_mult_v(n?this.a:1, this.axes[2]), s_mult_v(n*this.b, this.axes[0]));
+    this.axes[0] = v_add_v(s_mult_v(n?this.a:1, this.axes[0]), s_mult_v(n*this.b, s_mult_v(-1, this.axes[2])));
+    this.axes[2] = temp_k;
+  }
+  rotate_jk(n) {
+    var temp_j = v_add_v(s_mult_v(n?this.a:1, this.axes[1]), s_mult_v(n*this.b, this.axes[2]));
+    this.axes[2] = v_add_v(s_mult_v(n?this.a:1, this.axes[2]), s_mult_v(n*this.b, s_mult_v(-1, this.axes[1])));
+    this.axes[1] = temp_j;
+  }
+  rotate_ji(n) {
+    var temp_j = v_add_v(s_mult_v(n?this.a:1, this.axes[1]), s_mult_v(n*this.b, this.axes[0]));
+    this.axes[0] = v_add_v(s_mult_v(n?this.a:1, this.axes[0]), s_mult_v(n*this.b, s_mult_v(-1, this.axes[1])));
+    this.axes[1] = temp_j;
+  }
+  send_values_to_shader() {
+    gl.uniformMatrix3fv(matrix_location, false, flatten(this.matrix()));
+    gl.uniform3fv(camera_location, this.position);
+    gl.uniform1f(f_location, this.focal_length);
+  }
 }
 
-for (let i = 0; i < 18; i++) {
-  const a = i / 18 * Math.PI * 2;
-  const r = 24 + (i % 3) * 4;
-  const h = 3 + (i % 5) * 1.5;
-  box(Math.cos(a) * r, 0, Math.sin(a) * r, 3.5, h, 3.5, i % 2 ? 0x243752 : 0x2c405e);
+function gl_setup() {
+  canvas = document.getElementById("canvas");
+  gl = canvas.getContext("webgl", {antialias:true}) || canvas.getContext("experimental-webgl");
+  if (!gl) throw new Error("WebGL is not available in this browser");
+
+  resize();
+
+  var vs_source =
+    "precision mediump float;\n" +
+    "attribute vec3 vert_pos;\n" +
+    "attribute vec3 vert_color;\n" +
+    "varying vec3 frag_color;\n" +
+    "uniform mat3 u_matrix;\n" +
+    "uniform vec3 u_camera;\n" +
+    "uniform float f;\n" +
+    "uniform float w_h;\n" +
+    "vec3 proj3Dto2D(vec3 vp){\n" +
+    "  vec3 view_pos = vp*u_matrix;\n" +
+    "  float p = f/(view_pos.z+f);\n" +
+    "  if(view_pos.z>=0.0){ return vec3(view_pos.x*p,-view_pos.y*p*w_h,min(.98,view_pos.z*.008)); }\n" +
+    "  return vec3(2.0,2.0,2.0);\n" +
+    "}\n" +
+    "void main(){ frag_color=vert_color; gl_Position=vec4(proj3Dto2D(vert_pos-u_camera),1.0); }\n";
+
+  var fs_source =
+    "precision mediump float;\n" +
+    "varying vec3 frag_color;\n" +
+    "void main(){ gl_FragColor=vec4(frag_color,1.0); }\n";
+
+  program = prgm(vs_source, fs_source);
+  matrix_location = gl.getUniformLocation(program, "u_matrix");
+  camera_location = gl.getUniformLocation(program, "u_camera");
+  f_location = gl.getUniformLocation(program, "f");
+  w_h_location = gl.getUniformLocation(program, "w_h");
+
+  vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  pal = gl.getAttribLocation(program, "vert_pos");
+  cal = gl.getAttribLocation(program, "vert_color");
+
+  gl.vertexAttribPointer(pal, 3, gl.FLOAT, false, 6*Float32Array.BYTES_PER_ELEMENT, 0);
+  gl.enableVertexAttribArray(pal);
+  gl.vertexAttribPointer(cal, 3, gl.FLOAT, false, 6*Float32Array.BYTES_PER_ELEMENT, 3*Float32Array.BYTES_PER_ELEMENT);
+  gl.enableVertexAttribArray(cal);
+
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+  gl.clearDepth(1);
 }
 
-for (const [x, z] of [[-8,-8],[8,-8],[-8,8],[8,8]]) {
-  const post = new THREE.Mesh(new THREE.CylinderGeometry(.35,.5,4.5,10), new THREE.MeshStandardMaterial({color:0x6d89a8, roughness:.4, metalness:.3}));
-  post.position.set(x,2.25,z); post.castShadow = true; scene.add(post);
-  const lamp = new THREE.PointLight(0x8ac7ff, 12, 13, 2);
-  lamp.position.set(x,4.6,z); scene.add(lamp);
+function prgm(vs_source, fs_source) {
+  var vs = gl.createShader(gl.VERTEX_SHADER);
+  var fs = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(vs, vs_source);
+  gl.shaderSource(fs, fs_source);
+  gl.compileShader(vs);
+  gl.compileShader(fs);
+  if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) throw new Error("Vertex shader: " + gl.getShaderInfoLog(vs));
+  if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) throw new Error("Fragment shader: " + gl.getShaderInfoLog(fs));
+
+  var p = gl.createProgram();
+  gl.attachShader(p, vs);
+  gl.attachShader(p, fs);
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error("Shader link: " + gl.getProgramInfoLog(p));
+  gl.useProgram(p);
+  return p;
 }
 
-function makeTextSprite(text, scale = 1, bg = 'rgba(8,13,21,.78)', fg = '#ffffff') {
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  const dpr = 2;
-  ctx.font = `${15 * dpr}px system-ui, sans-serif`;
-  const width = Math.min(900, Math.max(120, ctx.measureText(text).width + 28 * dpr));
-  canvas.width = width;
-  canvas.height = 38 * dpr;
-  ctx.font = `${15 * dpr}px system-ui, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = bg;
-  roundRect(ctx, 0, 0, canvas.width, canvas.height, 14 * dpr);
-  ctx.fill();
-  ctx.fillStyle = fg;
-  ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 1);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }));
-  sprite.scale.set((canvas.width / canvas.height) * scale, scale, 1);
-  sprite.userData.texture = texture;
-  return sprite;
+function add_vertices(v) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, v, gl.DYNAMIC_DRAW);
 }
 
-function roundRect(ctx, x, y, w, h, r) {
+function inverse(mat3) {
+  var minors=[[],[],[]], cofactors=[[],[],[]], adjugate=[[],[],[]], count=[0,1,2];
+  for (var ii of count) {
+    for (var jj of count) {
+      var vals=[];
+      for (var kk of count.filter(function(n){return n!==ii;})) {
+        for (var ll of count.filter(function(n){return n!==jj;})) vals.push(mat3[kk][ll]);
+      }
+      minors[ii][jj]=vals[0]*vals[3]-vals[1]*vals[2];
+      cofactors[ii][jj]=minors[ii][jj]*(((ii+jj)&1)?-1:1);
+      adjugate[jj][ii]=cofactors[ii][jj];
+    }
+  }
+  var d=mat3[0][0]*minors[0][0]-mat3[0][1]*minors[0][1]+mat3[0][2]*minors[0][2];
+  return adjugate.map(function(arr){return arr.map(function(n){return n/d;});});
+}
+
+function transpose(mat3) {
+  return [[mat3[0][0],mat3[1][0],mat3[2][0]],[mat3[0][1],mat3[1][1],mat3[2][1]],[mat3[0][2],mat3[1][2],mat3[2][2]]];
+}
+
+function flatten(mat) { return mat.flat(1); }
+
+function v_add_v(a,b) {
+  var sum=[];
+  for(var i=0;i<a.length;i++) sum.push(a[i]+b[i]);
+  return sum;
+}
+
+function s_mult_v(a,b) { return b.map(function(n){return a*n;}); }
+
+function m_mult_v(m,v) {
+  var out=[];
+  for(var i=0;i<m.length;i++) {
+    var sum=0;
+    for(var j=0;j<m.length;j++) sum+=m[i][j]*v[j];
+    out.push(sum);
+  }
+  return out;
+}
+
+function clamp(n,a,b){ return Math.max(a,Math.min(b,n)); }
+
+function shade(c,k) { return [clamp(c[0]*k,0,1),clamp(c[1]*k,0,1),clamp(c[2]*k,0,1)]; }
+
+function vertex(out,p,c) { out.push(p[0],p[1],p[2],c[0],c[1],c[2]); }
+
+function quad(out,a,b,c,d,color) {
+  vertex(out,a,color); vertex(out,b,color); vertex(out,c,color);
+  vertex(out,a,color); vertex(out,d,color); vertex(out,c,color);
+}
+
+function box(out, center, size, color) {
+  var x=center[0], y=center[1], z=center[2], hx=size[0]/2, hy=size[1]/2, hz=size[2]/2;
+  var p000=[x-hx,y-hy,z-hz], p001=[x-hx,y-hy,z+hz], p010=[x-hx,y+hy,z-hz], p011=[x-hx,y+hy,z+hz];
+  var p100=[x+hx,y-hy,z-hz], p101=[x+hx,y-hy,z+hz], p110=[x+hx,y+hy,z-hz], p111=[x+hx,y+hy,z+hz];
+  quad(out,p100,p110,p111,p101,shade(color,.88));
+  quad(out,p000,p001,p011,p010,shade(color,.62));
+  quad(out,p010,p011,p111,p110,shade(color,.78));
+  quad(out,p000,p100,p101,p001,shade(color,.55));
+  quad(out,p001,p101,p111,p011,shade(color,1.05));
+  quad(out,p000,p010,p110,p100,shade(color,.45));
+}
+
+function floorQuad(out,x1,y1,x2,y2,z,color) {
+  quad(out,[x1,y1,z],[x2,y1,z],[x2,y2,z],[x1,y2,z],color);
+}
+
+function build_world() {
+  var out=[];
+  floorQuad(out,-50,-50,50,50,-1.05,[.045,.065,.09]);
+  floorQuad(out,-11,-11,11,11,-1.035,[.12,.18,.26]);
+
+  for(var g=-40;g<=40;g+=4) {
+    floorQuad(out,g-.018,-40,g+.018,40,-1.025,[.12,.18,.24]);
+    floorQuad(out,-40,g-.018,40,g+.018,-1.025,[.12,.18,.24]);
+  }
+
+  var buildings=[
+    [-14,-15,5,5,6],[-14,15,5,5,9],[14,-15,5,5,8],[14,15,5,5,7],
+    [-25,-5,6,5,10],[-25,8,5,7,6],[25,-6,5,7,7],[25,8,6,5,11],
+    [-7,-25,6,5,5],[8,-25,7,5,8],[-7,25,5,6,9],[8,25,6,5,6]
+  ];
+  for(var i=0;i<buildings.length;i++) {
+    var b=buildings[i], h=b[4], col=(i%2)?[.12,.24,.38]:[.16,.29,.43];
+    box(out,[b[0],b[1],-1+h/2],[b[2],b[3],h],col);
+    for(var wz=0;wz<Math.floor(h/1.6);wz++) {
+      var z=-.25+wz*1.45;
+      box(out,[b[0]+(b[0]<0?b[2]/2+.015:-b[2]/2-.015),b[1],z],[.035,b[3]*.55,.42],[.35,.72,.95]);
+    }
+  }
+
+  var pillars=[[-8,-8],[-8,8],[8,-8],[8,8]];
+  for(var p of pillars) {
+    box(out,[p[0],p[1],1.25],[.7,.7,4.5],[.27,.43,.62]);
+    box(out,[p[0],p[1],3.7],[1.15,1.15,.35],[.35,.72,1]);
+  }
+
+  box(out,[-4,0,-.25],[1.2,1.2,1.5],[.33,.78,.63]);
+  box(out,[0,-4,-.25],[1.2,1.2,1.5],[.67,.38,.84]);
+  box(out,[0,4,-.25],[1.2,1.2,1.5],[.88,.56,.24]);
+
+  static_vertices=out;
+}
+
+function color_from_id(id) {
+  var h=0;
+  for(var i=0;i<id.length;i++) h=(h*31+id.charCodeAt(i))>>>0;
+  var r=.28+((h&255)/255)*.55, g=.28+(((h>>8)&255)/255)*.55, b=.28+(((h>>16)&255)/255)*.55;
+  return [r,g,b];
+}
+
+function rebuild_scene() {
+  var out=static_vertices.slice();
+  temp_text=[];
+
+  for(var id in peers) {
+    var peer=peers[id];
+    var pos=peer.position;
+    if(!pos || pos.length<3) continue;
+    var c=peer.color || color_from_id(id);
+    box(out,[pos[0],pos[1],pos[2]-.48],[.85,.85,1.65],c);
+    box(out,[pos[0]-.03,pos[1],pos[2]+.58],[.64,.64,.64],shade(c,1.05));
+    temp_text.push({position:[pos[0],pos[1],pos[2]+1.15],text:peer.name || "visitor",kind:"name"});
+    if(peer.message && performance.now()<peer.messageUntil) {
+      temp_text.push({position:[pos[0],pos[1],pos[2]+1.72],text:peer.message,kind:"chat"});
+    }
+  }
+
+  vertices=new Float32Array(out);
+  add_vertices(vertices);
+  document.getElementById("online").textContent=(1+Object.keys(peers).length)+" user"+(Object.keys(peers).length?"s":"")+" online";
+}
+
+function setup_text_canvas() {
+  text=document.getElementById("text");
+  ctx=text.getContext("2d");
+  ctx.textAlign="center";
+  resize();
+}
+
+function project_label(point) {
+  var matrix=camera.matrix();
+  var rel=v_add_v(point,s_mult_v(-1,camera.position));
+  var q=m_mult_v(matrix,rel);
+  if(q[2]<.05) return null;
+  var p=camera.focal_length/(q[2]+camera.focal_length);
+  var x=(q[0]*p+1)*canvas.width/2;
+  var y=(1+q[1]*p*w_h)*canvas.height/2;
+  if(x<-200||x>canvas.width+200||y<-100||y>canvas.height+100) return null;
+  return [x,y,q[2]];
+}
+
+function rounded(ctx,x,y,w,h,r) {
+  var rr=Math.min(r,w/2,h/2);
   ctx.beginPath();
-  ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : (
-    ctx.moveTo(x+r,y), ctx.arcTo(x+w,y,x+w,y+h,r), ctx.arcTo(x+w,y+h,x,y+h,r), ctx.arcTo(x,y+h,x,y,r), ctx.arcTo(x,y,x+w,y,r)
-  );
+  ctx.moveTo(x+rr,y);
+  ctx.arcTo(x+w,y,x+w,y+h,rr);
+  ctx.arcTo(x+w,y+h,x,y+h,rr);
+  ctx.arcTo(x,y+h,x,y,rr);
+  ctx.arcTo(x,y,x+w,y,rr);
+  ctx.closePath();
 }
 
-function colorFromId(id) {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  const c = new THREE.Color();
-  c.setHSL((h % 360) / 360, .58, .58);
-  return c.getHex();
-}
-
-function createAvatar(id, name, color = colorFromId(id), local = false) {
-  const group = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: .55, metalness: .06 });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(.9, 1.15, .62), mat);
-  body.position.y = .82;
-  body.castShadow = true;
-  group.add(body);
-  const head = new THREE.Mesh(new THREE.BoxGeometry(.66, .66, .66), mat.clone());
-  head.position.y = 1.72;
-  head.castShadow = true;
-  group.add(head);
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0xeaf6ff });
-  for (const x of [-.16, .16]) {
-    const eye = new THREE.Mesh(new THREE.BoxGeometry(.09,.09,.035), eyeMat);
-    eye.position.set(x, 1.8, -.345);
-    group.add(eye);
+function draw_text() {
+  ctx.clearRect(0,0,text.width,text.height);
+  for(var item of temp_text) {
+    var s=project_label(item.position);
+    if(!s) continue;
+    var distance=s[2];
+    var fontSize=clamp(20-distance*.18,11,20);
+    ctx.font=(item.kind==="chat"?"600 ":"500 ")+fontSize+"px system-ui,sans-serif";
+    var width=Math.min(330,ctx.measureText(item.text).width+20);
+    var height=fontSize+13;
+    ctx.fillStyle=item.kind==="chat"?"rgba(239,246,255,.94)":"rgba(5,9,15,.76)";
+    rounded(ctx,s[0]-width/2,s[1]-height,width,height,9);
+    ctx.fill();
+    ctx.fillStyle=item.kind==="chat"?"#111827":"#f5f8fc";
+    ctx.fillText(item.text.slice(0,100),s[0],s[1]-7+fontSize*.72);
   }
-  const label = makeTextSprite(name || 'guest', .7);
-  label.position.y = 2.45;
-  group.add(label);
-  group.userData = { id, name, label, bubble: null, bubbleUntil: 0, local };
-  scene.add(group);
-  return group;
 }
 
-function replaceNameLabel(group, name) {
-  if (group.userData.label) {
-    group.remove(group.userData.label);
-    group.userData.label.material.map?.dispose();
-    group.userData.label.material.dispose();
+function resize() {
+  var dpr=Math.min(window.devicePixelRatio||1,1.5);
+  if(canvas) {
+    canvas.width=Math.floor(innerWidth*dpr);
+    canvas.height=Math.floor(innerHeight*dpr);
+    canvas.style.width=innerWidth+"px";
+    canvas.style.height=innerHeight+"px";
+    if(gl) {
+      gl.viewport(0,0,canvas.width,canvas.height);
+      w_h=canvas.width/canvas.height;
+      if(w_h_location) gl.uniform1f(w_h_location,w_h);
+    }
   }
-  const label = makeTextSprite(name || 'guest', .7);
-  label.position.y = 2.45;
-  group.add(label);
-  group.userData.label = label;
-  group.userData.name = name;
-}
-
-function showBubble(group, message) {
-  if (group.userData.bubble) {
-    group.remove(group.userData.bubble);
-    group.userData.bubble.material.map?.dispose();
-    group.userData.bubble.material.dispose();
+  if(text) {
+    text.width=Math.floor(innerWidth*dpr);
+    text.height=Math.floor(innerHeight*dpr);
+    text.style.width=innerWidth+"px";
+    text.style.height=innerHeight+"px";
+    if(ctx) ctx.setTransform(1,0,0,1,0,0);
   }
-  const bubble = makeTextSprite(message.slice(0, 120), .92, 'rgba(245,248,255,.94)', '#111827');
-  bubble.position.y = 3.25;
-  group.add(bubble);
-  group.userData.bubble = bubble;
-  group.userData.bubbleUntil = performance.now() + 8000;
 }
 
-const me = createAvatar(clientId, displayName || 'you', colorFromId(clientId), true);
-me.position.set(0, 0, 2.5);
-
-const lobbyTitle = makeTextSprite('MY LOBBY', 1.3, 'rgba(14,24,38,.86)', '#a9d7ff');
-lobbyTitle.position.set(0, 5.5, -10.5);
-scene.add(lobbyTitle);
-
-function ensurePeer(id, name, color) {
-  if (!id || id === clientId) return null;
-  let peer = peers.get(id);
-  if (!peer) {
-    const group = createAvatar(id, name || 'visitor', color ?? colorFromId(id), false);
-    group.position.set((Math.random()-.5)*5, 0, (Math.random()-.5)*5);
-    peer = { group, target: group.position.clone(), ry: 0, targetRy: 0, name: name || 'visitor', lastSeen: performance.now() };
-    peers.set(id, peer);
-    updateOnline();
-  }
-  if (name && peer.name !== name) {
-    peer.name = name;
-    replaceNameLabel(peer.group, name);
-  }
-  peer.lastSeen = performance.now();
-  return peer;
-}
-
-function removePeer(id) {
-  const peer = peers.get(id);
-  if (!peer) return;
-  scene.remove(peer.group);
-  peer.group.traverse(o => {
-    if (o.geometry) o.geometry.dispose();
-    if (o.material?.map) o.material.map.dispose();
-    if (o.material) o.material.dispose();
-  });
-  peers.delete(id);
-  updateOnline();
-}
-
-function updateOnline() {
-  onlineEl.textContent = `${1 + peers.size} online`;
-}
-
-function appendChat(name, message, system = false) {
-  const line = document.createElement('div');
-  line.className = `chat-line${system ? ' system' : ''}`;
-  if (system) line.textContent = message;
+function append_message(who,msg,system) {
+  var box=document.getElementById("messages");
+  var line=document.createElement("div");
+  line.className="message"+(system?" system":"");
+  if(system) line.textContent=msg;
   else {
-    const b = document.createElement('b');
-    b.textContent = `${name}: `;
-    line.append(b, document.createTextNode(message));
+    var b=document.createElement("b");
+    b.textContent=who+": ";
+    line.appendChild(b);
+    line.appendChild(document.createTextNode(msg));
   }
-  chatLog.appendChild(line);
-  while (chatLog.children.length > 18) chatLog.firstChild.remove();
-  chatLog.scrollTop = chatLog.scrollHeight;
+  box.appendChild(line);
+  while(box.children.length>15) box.removeChild(box.firstChild);
+  box.scrollTop=box.scrollHeight;
 }
 
-const channel = 'BroadcastChannel' in window ? new BroadcastChannel(`3dchat:${roomId}`) : null;
-function bcSend(payload) { channel?.postMessage(payload); }
-channel?.addEventListener('message', e => receivePacket(e.data, 'local-tab'));
-
-function packetBase(type) {
-  return { type, clientId, name: displayName, color: colorFromId(clientId), t: Date.now() };
+function state_packet(type) {
+  return {type:type||"state",user_id:user_id,name:name,position:camera.position.slice(),color:color_from_id(user_id),t:Date.now()};
 }
 
-function currentState(type = 'state') {
-  return { ...packetBase(type), x: me.position.x, z: me.position.z, ry: me.rotation.y };
-}
+function receive_packet(data,transport) {
+  if(!data||data.user_id===user_id) return;
+  if(transport && transport!=="tab") transportToUser[transport]=data.user_id;
 
-function receivePacket(data, transportPeerId) {
-  if (!data || data.clientId === clientId) return;
-  if (transportPeerId && transportPeerId !== 'local-tab') transportToClient.set(transportPeerId, data.clientId);
-  const peer = ensurePeer(data.clientId, data.name, data.color);
-  if (!peer) return;
-  peer.lastSeen = performance.now();
-  if (data.type === 'state' || data.type === 'hello') {
-    if (Number.isFinite(data.x) && Number.isFinite(data.z)) peer.target.set(data.x, 0, data.z);
-    if (Number.isFinite(data.ry)) peer.targetRy = data.ry;
-    if (data.type === 'hello') bcSend(currentState('state'));
+  if(!peers[data.user_id]) peers[data.user_id]={position:[0,0,.35],name:"visitor",color:color_from_id(data.user_id),message:"",messageUntil:0,lastSeen:0};
+  var peer=peers[data.user_id];
+  peer.lastSeen=performance.now();
+  if(data.name) peer.name=String(data.name).slice(0,24);
+  if(data.color) peer.color=data.color;
+
+  if((data.type==="state"||data.type==="hello")&&Array.isArray(data.position)&&data.position.length>=3) {
+    peer.position=data.position.slice(0,3).map(Number);
   }
-  if (data.type === 'chat' && data.message) {
-    const id = data.messageId || `${data.clientId}:${data.t}:${data.message}`;
-    if (seenMessages.has(id)) return;
-    seenMessages.add(id);
-    appendChat(data.name || peer.name, String(data.message));
-    showBubble(peer.group, String(data.message));
+  if(data.type==="chat"&&data.message) {
+    peer.message=String(data.message).slice(0,100);
+    peer.messageUntil=performance.now()+8000;
+    append_message(peer.name,peer.message,false);
   }
+  rebuild_scene();
 }
 
-async function connectP2P() {
-  networkEl.textContent = 'connecting peer-to-peer…';
+function broadcast_local(data) {
+  if(channel) channel.postMessage(data);
+}
+
+function send_state(force) {
+  var now=performance.now();
+  if(!force && now-lastSend<90) return;
+  lastSend=now;
+  var data=state_packet("state");
+  broadcast_local(data);
+  if(p2pState) p2pState.send(data).catch(function(){});
+}
+
+function send() {
+  var input=document.getElementById("msg");
+  var msg=input.value.trim().slice(0,100);
+  if(!msg) return;
+  input.value="";
+  append_message(name,msg,false);
+  var data=state_packet("chat");
+  data.message=msg;
+  broadcast_local(data);
+  if(p2pChat) p2pChat.send(data).catch(function(){});
+}
+
+function connect_network() {
+  var status=document.getElementById("network");
   try {
-    const { joinRoom } = await import('https://esm.run/trystero@0.25.4');
-    p2p = joinRoom({ appId: 'saptarshi-halder-3dchat-revival-2026' }, roomId);
-    p2pState = p2p.makeAction('state');
-    p2pProfile = p2p.makeAction('profile');
-    p2pChat = p2p.makeAction('chat');
-
-    p2pState.onMessage = (data, { peerId }) => receivePacket({ ...data, type: 'state' }, peerId);
-    p2pProfile.onMessage = (data, { peerId }) => receivePacket({ ...data, type: 'hello' }, peerId);
-    p2pChat.onMessage = (data, { peerId }) => receivePacket({ ...data, type: 'chat' }, peerId);
-
-    p2p.onPeerJoin = peerId => {
-      networkEl.textContent = 'peer-to-peer online';
-      p2pProfile.send(currentState('hello'), { target: peerId }).catch(() => {});
-      p2pState.send(currentState(), { target: peerId }).catch(() => {});
-    };
-    p2p.onPeerLeave = peerId => {
-      const id = transportToClient.get(peerId);
-      if (id) removePeer(id);
-      transportToClient.delete(peerId);
-    };
-    networkEl.textContent = 'peer-to-peer ready';
-  } catch (err) {
-    console.warn('P2P unavailable, local world still active', err);
-    networkEl.textContent = 'local world · P2P unavailable';
-  }
-}
-
-function sendState(force = false) {
-  const now = performance.now();
-  if (!force && now - lastStateSent < 90) return;
-  lastStateSent = now;
-  const data = currentState();
-  bcSend(data);
-  p2pState?.send(data).catch(() => {});
-}
-
-function sendChat(message) {
-  const text = message.trim().slice(0, 120);
-  if (!text) return;
-  const data = { ...packetBase('chat'), message: text, messageId: `${clientId}:${Date.now()}:${Math.random().toString(36).slice(2,8)}` };
-  seenMessages.add(data.messageId);
-  appendChat(displayName, text);
-  showBubble(me, text);
-  bcSend(data);
-  p2pChat?.send(data).catch(() => {});
-}
-
-function enterLobby() {
-  displayName = (nameInput.value.trim() || `Guest-${clientId.slice(0,4)}`).slice(0,24);
-  localStorage.setItem('3dchat-name', displayName);
-  replaceNameLabel(me, displayName);
-  entered = true;
-  joinScreen.style.display = 'none';
-  appendChat('', `Welcome to ${roomId}.`, true);
-  bcSend(currentState('hello'));
-  connectP2P();
-  chatInput.focus({ preventScroll: true });
-  chatInput.blur();
-}
-
-enterButton.addEventListener('click', enterLobby);
-nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') enterLobby(); });
-
-chatForm.addEventListener('submit', e => {
-  e.preventDefault();
-  if (!entered) return;
-  sendChat(chatInput.value);
-  chatInput.value = '';
-});
-
-addEventListener('keydown', e => {
-  if (!entered) return;
-  if (document.activeElement === chatInput || document.activeElement === nameInput) return;
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    chatInput.focus();
-    return;
-  }
-  keys.add(e.code);
-  if (e.code.startsWith('Arrow')) e.preventDefault();
-});
-addEventListener('keyup', e => keys.delete(e.code));
-
-for (const btn of document.querySelectorAll('[data-key]')) {
-  const code = btn.dataset.key;
-  const down = e => { e.preventDefault(); keys.add(code); };
-  const up = e => { e.preventDefault(); keys.delete(code); };
-  btn.addEventListener('pointerdown', down);
-  btn.addEventListener('pointerup', up);
-  btn.addEventListener('pointercancel', up);
-  btn.addEventListener('pointerleave', up);
-}
-
-renderer.domElement.addEventListener('pointerdown', e => {
-  pointerDown = true; lastPointerX = e.clientX; lastPointerY = e.clientY;
-  renderer.domElement.setPointerCapture?.(e.pointerId);
-});
-renderer.domElement.addEventListener('pointermove', e => {
-  if (!pointerDown || !entered) return;
-  cameraYaw -= (e.clientX - lastPointerX) * .006;
-  cameraPitch = THREE.MathUtils.clamp(cameraPitch - (e.clientY - lastPointerY) * .004, .08, .95);
-  lastPointerX = e.clientX; lastPointerY = e.clientY;
-});
-renderer.domElement.addEventListener('pointerup', () => pointerDown = false);
-renderer.domElement.addEventListener('wheel', e => {
-  cameraDistance = THREE.MathUtils.clamp(cameraDistance + e.deltaY * .006, 4.5, 12);
-}, { passive: true });
-
-addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
-});
-
-const clock = new THREE.Clock();
-const move = new THREE.Vector3();
-const forward = new THREE.Vector3();
-const right = new THREE.Vector3();
-let moving = false;
-
-function animate() {
-  requestAnimationFrame(animate);
-  const dt = Math.min(clock.getDelta(), .05);
-  const now = performance.now();
-
-  if (entered && document.activeElement !== chatInput) {
-    cameraYaw += ((keys.has('ArrowLeft') ? 1 : 0) - (keys.has('ArrowRight') ? 1 : 0)) * 1.65 * dt;
-    cameraPitch = THREE.MathUtils.clamp(cameraPitch + ((keys.has('ArrowDown') ? 1 : 0) - (keys.has('ArrowUp') ? 1 : 0)) * 1.05 * dt, .08, .95);
-
-    forward.set(-Math.sin(cameraYaw), 0, -Math.cos(cameraYaw));
-    right.set(Math.cos(cameraYaw), 0, -Math.sin(cameraYaw));
-    move.set(0,0,0);
-    if (keys.has('KeyW')) move.add(forward);
-    if (keys.has('KeyS')) move.sub(forward);
-    if (keys.has('KeyD')) move.add(right);
-    if (keys.has('KeyA')) move.sub(right);
-    moving = move.lengthSq() > 0;
-    if (moving) {
-      move.normalize().multiplyScalar(5.4 * dt);
-      me.position.add(move);
-      me.position.x = THREE.MathUtils.clamp(me.position.x, -45, 45);
-      me.position.z = THREE.MathUtils.clamp(me.position.z, -45, 45);
-      me.rotation.y = Math.atan2(move.x, move.z) + Math.PI;
-      sendState();
+    if("BroadcastChannel" in window) {
+      channel=new BroadcastChannel("3dchat:"+room);
+      channel.onmessage=function(e){ receive_packet(e.data,"tab"); };
+      broadcast_local(state_packet("hello"));
     }
-  }
+  } catch(e) {}
 
-  for (const [id, peer] of peers) {
-    peer.group.position.lerp(peer.target, 1 - Math.pow(.001, dt));
-    let dr = peer.targetRy - peer.group.rotation.y;
-    dr = Math.atan2(Math.sin(dr), Math.cos(dr));
-    peer.group.rotation.y += dr * Math.min(1, dt * 9);
-    if (peer.group.userData.bubble && now > peer.group.userData.bubbleUntil) {
-      peer.group.remove(peer.group.userData.bubble);
-      peer.group.userData.bubble.material.map?.dispose();
-      peer.group.userData.bubble.material.dispose();
-      peer.group.userData.bubble = null;
+  status.textContent="connecting peer-to-peer…";
+  import("https://esm.run/trystero@0.25.4").then(function(mod){
+    p2pRoom=mod.joinRoom({appId:"saptarshi-halder-3dchat-custom-webgl"},room);
+    p2pState=p2pRoom.makeAction("state");
+    p2pChat=p2pRoom.makeAction("chat");
+    p2pHello=p2pRoom.makeAction("hello");
+
+    p2pState.onMessage=function(data,meta){ receive_packet(Object.assign({},data,{type:"state"}),meta.peerId); };
+    p2pChat.onMessage=function(data,meta){ receive_packet(Object.assign({},data,{type:"chat"}),meta.peerId); };
+    p2pHello.onMessage=function(data,meta){ receive_packet(Object.assign({},data,{type:"hello"}),meta.peerId); };
+
+    p2pRoom.onPeerJoin=function(peerId){
+      status.textContent="peer-to-peer online";
+      p2pHello.send(state_packet("hello"),{target:peerId}).catch(function(){});
+      p2pState.send(state_packet("state"),{target:peerId}).catch(function(){});
+    };
+    p2pRoom.onPeerLeave=function(peerId){
+      var id=transportToUser[peerId];
+      if(id&&peers[id]) delete peers[id];
+      delete transportToUser[peerId];
+      rebuild_scene();
+    };
+    status.textContent="peer-to-peer ready";
+  }).catch(function(err){
+    console.warn(err);
+    status.textContent="local world · P2P unavailable";
+  });
+}
+
+function setup_controls() {
+  document.addEventListener("keydown",function(e){
+    if(document.activeElement===document.getElementById("msg")||document.activeElement===document.getElementById("name")) return;
+    if(e.key==="Enter") {
+      e.preventDefault();
+      document.getElementById("msg").focus();
+      return;
     }
-    if (now - peer.lastSeen > 15000 && ![...transportToClient.values()].includes(id)) removePeer(id);
-  }
+    down[e.which||e.keyCode]=1;
+    if([37,38,39,40].indexOf(e.which||e.keyCode)>=0) e.preventDefault();
+  });
+  document.addEventListener("keyup",function(e){ down[e.which||e.keyCode]=0; });
 
-  if (me.userData.bubble && now > me.userData.bubbleUntil) {
-    me.remove(me.userData.bubble);
-    me.userData.bubble.material.map?.dispose();
-    me.userData.bubble.material.dispose();
-    me.userData.bubble = null;
-  }
-
-  const cp = Math.cos(cameraPitch), sp = Math.sin(cameraPitch);
-  const camOffset = new THREE.Vector3(
-    Math.sin(cameraYaw) * cp * cameraDistance,
-    sp * cameraDistance + 1.5,
-    Math.cos(cameraYaw) * cp * cameraDistance
-  );
-  const desiredCam = me.position.clone().add(camOffset);
-  camera.position.lerp(desiredCam, 1 - Math.pow(.00005, dt));
-  camera.lookAt(me.position.x, 1.1, me.position.z);
-
-  if (entered && now - lastHeartbeat > 1800) {
-    lastHeartbeat = now;
-    sendState(true);
-  }
-
-  renderer.render(scene, camera);
+  document.querySelectorAll("[data-key]").forEach(function(el){
+    var k=Number(el.getAttribute("data-key"));
+    function on(e){e.preventDefault();down[k]=1;}
+    function off(e){e.preventDefault();down[k]=0;}
+    el.addEventListener("pointerdown",on);
+    el.addEventListener("pointerup",off);
+    el.addEventListener("pointercancel",off);
+    el.addEventListener("pointerleave",off);
+  });
 }
 
-try {
-  updateOnline();
-  animate();
-} catch (err) {
-  fatal.hidden = false;
-  fatal.textContent = `3D Chat could not start.\n\n${err?.stack || err}`;
+function enter_lobby() {
+  var input=document.getElementById("name");
+  name=(input.value.trim()||localStorage.getItem("3dchat-name")||("Guest-"+user_id.slice(0,4))).slice(0,24);
+  localStorage.setItem("3dchat-name",name);
+  document.getElementById("join").style.display="none";
+  entered=true;
+  append_message("", "Welcome to My Lobby. This entire 3D scene is rendered by the original custom WebGL engine.", true);
+  connect_network();
+  send_state(true);
 }
 
-addEventListener('beforeunload', () => {
-  channel?.close();
-  p2p?.leave();
+function loop() {
+  try {
+    gl.clearColor(.018,.029,.045,1);
+    gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+
+    var moved=down[87]||down[83]||down[68]||down[65];
+    camera.shift(
+      v_add_v(
+        v_add_v(
+          s_mult_v(camera.move_speed*down[87],camera.axes[2]),
+          s_mult_v(-camera.move_speed*down[83],camera.axes[2])
+        ),
+        v_add_v(
+          s_mult_v(camera.move_speed*down[68],camera.axes[0]),
+          s_mult_v(-camera.move_speed*down[65],camera.axes[0])
+        )
+      )
+    );
+    camera.rotate_ki(down[39]-down[37]);
+    camera.rotate_jk(down[38]-down[40]);
+    camera.send_values_to_shader();
+
+    gl.drawArrays(gl.TRIANGLES,0,vertices.length/6);
+    draw_text();
+
+    var now=performance.now();
+    if(entered && (moved||down[37]||down[38]||down[39]||down[40])) send_state(false);
+    if(entered && now-lastHeartbeat>1800) {
+      lastHeartbeat=now;
+      send_state(true);
+    }
+
+    var changed=false;
+    for(var id in peers) {
+      if(peers[id].message && now>=peers[id].messageUntil) {
+        peers[id].message="";
+        changed=true;
+      }
+      if(now-peers[id].lastSeen>18000 && Object.values(transportToUser).indexOf(id)<0) {
+        delete peers[id];
+        changed=true;
+      }
+    }
+    if(changed) rebuild_scene();
+
+    frame++;
+    requestAnimationFrame(loop);
+  } catch(err) {
+    var fatal=document.getElementById("fatal");
+    fatal.hidden=false;
+    fatal.textContent="3D Chat stopped:\\n\\n"+(err.stack||err);
+    throw err;
+  }
+}
+
+window.addEventListener("load",function(){
+  try {
+    gl_setup();
+    setup_text_canvas();
+    setup_controls();
+    camera=new Camera();
+    build_world();
+    rebuild_scene();
+
+    var saved=localStorage.getItem("3dchat-name");
+    if(saved) document.getElementById("name").value=saved;
+    document.getElementById("enter").addEventListener("click",enter_lobby);
+    document.getElementById("name").addEventListener("keydown",function(e){if(e.key==="Enter") enter_lobby();});
+    document.getElementById("chat-form").addEventListener("submit",function(e){e.preventDefault();if(entered) send();});
+    window.addEventListener("resize",resize);
+    requestAnimationFrame(loop);
+  } catch(err) {
+    var fatal=document.getElementById("fatal");
+    fatal.hidden=false;
+    fatal.textContent="3D Chat could not start:\\n\\n"+(err.stack||err);
+  }
+});
+
+window.addEventListener("beforeunload",function(){
+  if(channel) channel.close();
+  if(p2pRoom) p2pRoom.leave();
 });
