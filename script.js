@@ -3,6 +3,7 @@
 
 var camera, vertices;
 var locations = {};
+var temp_text = [];
 var down = Array(1000).fill(0);
 var frame = 1;
 window.onload = function() {
@@ -14,6 +15,13 @@ window.onload = function() {
   write_data("1", "online"+user_id);
   var ref = firebase.database().ref("User/"+"online"+user_id);
   ref.onDisconnect().set("0");
+  database.ref("User").on("value", function(snapshot) {
+    locations = snapshot.val() || {};
+    update_scene(locations);
+  }, function(error) {
+    document.getElementById("online").textContent = "Connection unavailable";
+    console.error(error);
+  });
   camera = new Camera;
   write_data(''+camera.position, user_id);
   vertices = new Float32Array([]);
@@ -79,11 +87,9 @@ window.onload = function() {
 function loop() {
   if (frame%10 === 0) {
     write_data(''+camera.position.map(n => Math.round(n*100)/100), user_id);
-    locations = read_data();
-    update_scene(locations);
   }
   gl.clearColor(0, 0, 0, 1);
-  gl.clear(gl.COLOR_BUFFER_BIT||gl.DEPTH_BUFFER_BIT);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   camera.shift(
     v_add_v(
       v_add_v(
@@ -102,13 +108,13 @@ function loop() {
   camera.send_values_to_shader();
   if (frame>50) {
     matrix = camera.matrix();
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, text.width, text.height);
     for (loc of temp_text) {
       var neww = m_mult_v(matrix, v_add_v(loc[0], s_mult_v(-1, camera.position)));
       var p = camera.focal_length/(neww[2]+camera.focal_length);
       if (neww[2] >= 0.0) {
-        ctx.fillStyle = ["white", "green"][loc[2]];
-        ctx.font = ["10px sans-serif", "20px sans-serif"][loc[2]];
+        ctx.fillStyle = ["white", "green"][loc[2]] || "white";
+        ctx.font = ["10px sans-serif", "20px sans-serif"][loc[2]] || "10px sans-serif";
         ctx.fillText(loc[1], (neww[0]*p+1)*canvas.width/2, (canvas.height-(1-neww[1]*p*w_h)*canvas.height/2));
       }
     }

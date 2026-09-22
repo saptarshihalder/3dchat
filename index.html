@@ -48,7 +48,7 @@ var firebaseConfig = {
 // Initialize Firebase
 firebase.initializeApp(firebaseConfig);
 var database = firebase.database();
-var user_id = ""+parseInt(Math.random()*100);
+var user_id = ""+Math.floor(Math.random()*1000000000);
 var name_id = "Name"+user_id
 var dict = {};
 
@@ -132,9 +132,9 @@ void main() {
   this.matrix_location = gl.getUniformLocation(program, "u_matrix");
   this.camera_location = gl.getUniformLocation(program, "u_camera");
   this.f_location = gl.getUniformLocation(program, "f");
-  this.w_f_location = gl.getUniformLocation(program, "w_h");
+  this.w_h_location = gl.getUniformLocation(program, "w_h");
   this.w_h = canvas.width/canvas.height;
-  gl.uniform1f(w_f_location, w_h);
+  gl.uniform1f(this.w_h_location, this.w_h);
   vbo = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
   pal = gl.getAttribLocation(program, 'vert_pos');
@@ -180,8 +180,11 @@ function add_vertices(vertices) {
 }
 
 function write_data(val, key=user_id) {
-  dict[key] = val;
-  database.ref("User").update(dict);
+  var update = {};
+  update[key] = val;
+  return database.ref("User").update(update).catch(function(error) {
+    console.error(error);
+  });
 }
 
 function read_data() {
