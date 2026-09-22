@@ -5,7 +5,21 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#05080d">
   <title>3D Chat — My Lobby</title>
-  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./style.css?v=raw-webgl-20260923-2">
+  <style>
+    html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#05080d;color:#fff;font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}
+    #canvas,#text{position:fixed;inset:0;width:100%;height:100%;display:block}
+    #canvas{z-index:0}#text{z-index:4;pointer-events:none}
+    #hud{position:fixed;z-index:10;top:16px;left:18px;display:flex;gap:12px;pointer-events:none}
+    #hud h1{font-size:16px;margin:0 0 2px}
+    #network{position:fixed;z-index:10;right:18px;top:16px}
+    #chatbox{position:fixed;z-index:12;left:50%;bottom:18px;transform:translateX(-50%);width:min(610px,calc(100vw - 36px))}
+    #controls{position:fixed;z-index:11;left:16px;right:16px;bottom:18px;display:flex;justify-content:space-between;pointer-events:none}
+    .pad{display:none}
+    #join{position:fixed;z-index:50;inset:0;display:grid;place-items:center;padding:20px;background:rgba(3,5,9,.88)}
+    #join .card{width:min(420px,100%)}
+    @media(max-width:760px),(pointer:coarse){.pad{display:block}}
+  </style>
 </head>
 <body>
   <canvas id="canvas"></canvas>
@@ -52,6 +66,6 @@
   </div>
 
   <div id="fatal" hidden></div>
-  <script src="./script.js"></script>
+  <script src="./script.js?v=raw-webgl-20260923-2"></script>
 </body>
 </html>
