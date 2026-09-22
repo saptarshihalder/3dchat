@@ -13,19 +13,22 @@ window.onload = function() {
   write_data(name, name_id);
   alert("Text rendering is improved.");
   write_data("1", "online"+user_id);
+  camera = new Camera;
+  write_data(''+camera.position, user_id);
+  vertices = new Float32Array([]);
+  add_vertices(vertices);
+  update_scene(locations);
+
   var ref = firebase.database().ref("User/"+"online"+user_id);
   ref.onDisconnect().set("0");
   database.ref("User").on("value", function(snapshot) {
     locations = snapshot.val() || {};
     update_scene(locations);
   }, function(error) {
-    document.getElementById("online").textContent = "Connection unavailable";
+    document.getElementById("online").textContent = "Firebase unavailable — local lobby cube";
+    update_scene({});
     console.error(error);
   });
-  camera = new Camera;
-  write_data(''+camera.position, user_id);
-  vertices = new Float32Array([]);
-  add_vertices(vertices);
   document.addEventListener("keydown", function(e) {
     down[e.which] = 1;
   });

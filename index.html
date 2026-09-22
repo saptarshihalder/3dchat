@@ -95,8 +95,13 @@ function gl_setup() {
   gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
+  if (!gl) {
+    throw new Error("WebGL is not available in this browser");
+  }
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.enable(gl.DEPTH_TEST);
+  gl.clearDepth(1.0);
+  gl.depthFunc(gl.LEQUAL);
   this.vs_source =
 `
 precision mediump float;
@@ -108,12 +113,12 @@ uniform vec3 u_camera;
 uniform float f;
 uniform float w_h;
 vec3 proj3Dto2D(vec3 vp) {
-  vec3 new = vp*u_matrix;
-  float p = f/(new.z+f);
-  if (new.z >= 0.0) {
-    return vec3(new.x*p, -new.y*p*w_h, new.z*0.002);
+  vec3 view_pos = vp*u_matrix;
+  float p = f/(view_pos.z+f);
+  if (view_pos.z >= 0.0) {
+    return vec3(view_pos.x*p, -view_pos.y*p*w_h, view_pos.z*0.002);
   }
-  return vec3(new.x*p, -new.y*p*w_h, new.z-1.0);
+  return vec3(view_pos.x*p, -view_pos.y*p*w_h, view_pos.z-1.0);
 }
 void main() {
   frag_color = vert_color;
@@ -167,10 +172,23 @@ function prgm(vs_source, fs_source) {
   gl.shaderSource(fs, fs_source);
   gl.compileShader(vs);
   gl.compileShader(fs);
+
+  if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) {
+    throw new Error("Vertex shader: " + gl.getShaderInfoLog(vs));
+  }
+  if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
+    throw new Error("Fragment shader: " + gl.getShaderInfoLog(fs));
+  }
+
   program = gl.createProgram();
   gl.attachShader(program, vs);
   gl.attachShader(program, fs);
   gl.linkProgram(program);
+
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    throw new Error("Shader link: " + gl.getProgramInfoLog(program));
+  }
+
   gl.useProgram(program);
   return program;
 }
@@ -266,6 +284,7 @@ function quads_to_triangles(quads) {
 }
 
 function update_scene(locations) {
+  locations = locations || {};
   var quads = [
     [.5, -.5, -1, 1, 0, 0],
     [.5, .5, -1, 0, 1, 0],
@@ -295,23 +314,45 @@ function update_scene(locations) {
   var temp = [];
   this.temp_text = [];
   var connected = 0;
+  var remote_cubes = 0;
+
   for (id in locations) {
-    if (id !== user_id && !id.match('Name') && !id.match('online')) {
-      var location = locations[id].split(",").map(parseFloat).concat([0, 0, 0]);
-      for (var i = 0; i < 24; i++) {
-        temp.push(v_add_v(location, quads[i]));
+    if (/^[0-9]+$/.test(id) && id !== user_id && typeof locations[id] === "string") {
+      var parts = locations[id].split(",").map(Number);
+      if (parts.length >= 3 && parts.slice(0, 3).every(Number.isFinite)) {
+        var location = parts.slice(0, 3).concat([0, 0, 0]);
+        for (var i = 0; i < 24; i++) {
+          temp.push(v_add_v(location, quads[i]));
+        }
+        remote_cubes++;
       }
-    } else if (!id.match(user_id) && id.match('Name') && !id.match('online')) {
+    } else if (id.indexOf("Name") === 0 && id !== name_id) {
       try {
-        var location = locations[id.slice(4)].split(",").map(parseFloat);
-        temp_text.push([location, locations[id], locations["online"+id.slice(4)]]);
+        var pos = locations[id.slice(4)];
+        if (typeof pos === "string") {
+          var text_location = pos.split(",").map(Number).slice(0, 3);
+          if (text_location.every(Number.isFinite)) {
+            temp_text.push([text_location, String(locations[id]), locations["online"+id.slice(4)]]);
+          }
+        }
       }
       catch(err) {}
-    } else if (id.match('online')) {
-      connected += parseInt(locations[id]);
+    } else if (id.indexOf("online") === 0) {
+      var n = parseInt(locations[id], 10);
+      if (Number.isFinite(n)) connected += n;
     }
   }
-  document.getElementById("online").textContent = "#Users online: "+connected;
+
+  if (remote_cubes === 0 && camera) {
+    var fallback = v_add_v(camera.position, s_mult_v(5, camera.axes[2])).concat([0, 0, 0]);
+    for (var j = 0; j < 24; j++) {
+      temp.push(v_add_v(fallback, quads[j]));
+    }
+  }
+
+  document.getElementById("online").textContent = remote_cubes === 0
+    ? "#Users online: "+connected+" — local lobby cube"
+    : "#Users online: "+connected;
   vertices = new Float32Array(quads_to_triangles(temp));
   add_vertices(vertices);
 }
