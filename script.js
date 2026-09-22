@@ -18,6 +18,11 @@ var p2pRoom = null, p2pState = null, p2pChat = null, p2pHello = null;
 var transportToUser = {};
 var lastSend = 0;
 var lastHeartbeat = 0;
+var player_position = [8, 0, 0.35];
+var local_message = "";
+var local_message_until = 0;
+var follow_distance = 4.4;
+var follow_height = 1.15;
 
 class Camera {
   constructor(position=[8, 0, 0.35], axes=[[0, 1, 0], [0, 0, -1], [-1, 0, 0]], focal_length=2, move_speed=.11, rot_speed=.035) {
@@ -176,6 +181,35 @@ function m_mult_v(m,v) {
 
 function clamp(n,a,b){ return Math.max(a,Math.min(b,n)); }
 
+function horizontal_unit(v) {
+  var d=Math.sqrt(v[0]*v[0]+v[1]*v[1]);
+  if(d<0.0001) return [0,0,0];
+  return [v[0]/d,v[1]/d,0];
+}
+
+function update_camera_follow() {
+  var f=horizontal_unit(camera.axes[2]);
+  camera.position=[
+    player_position[0]-f[0]*follow_distance,
+    player_position[1]-f[1]*follow_distance,
+    player_position[2]+follow_height
+  ];
+}
+
+function move_player() {
+  var f=horizontal_unit(camera.axes[2]);
+  var r=horizontal_unit(camera.axes[0]);
+  var dx=(f[0]*(down[87]-down[83])+r[0]*(down[68]-down[65]))*camera.move_speed;
+  var dy=(f[1]*(down[87]-down[83])+r[1]*(down[68]-down[65]))*camera.move_speed;
+  if(dx||dy) {
+    player_position[0]=clamp(player_position[0]+dx,-42,42);
+    player_position[1]=clamp(player_position[1]+dy,-42,42);
+    rebuild_scene();
+    return true;
+  }
+  return false;
+}
+
 function shade(c,k) { return [clamp(c[0]*k,0,1),clamp(c[1]*k,0,1),clamp(c[2]*k,0,1)]; }
 
 function vertex(out,p,c) { out.push(p[0],p[1],p[2],c[0],c[1],c[2]); }
@@ -245,17 +279,32 @@ function color_from_id(id) {
   return [r,g,b];
 }
 
+function add_avatar(out,pos,c) {
+  box(out,[pos[0],pos[1],pos[2]-.45],[.82,.72,1.35],c);
+  box(out,[pos[0],pos[1],pos[2]+.55],[.62,.62,.62],shade(c,1.08));
+  box(out,[pos[0]-.18,pos[1],pos[2]-1.05],[.24,.28,.55],shade(c,.72));
+  box(out,[pos[0]+.18,pos[1],pos[2]-1.05],[.24,.28,.55],shade(c,.72));
+}
+
 function rebuild_scene() {
   var out=static_vertices.slice();
   temp_text=[];
+
+  if(entered) {
+    var selfColor=color_from_id(user_id);
+    add_avatar(out,player_position,selfColor);
+    temp_text.push({position:[player_position[0],player_position[1],player_position[2]+1.2],text:name || "you",kind:"name"});
+    if(local_message && performance.now()<local_message_until) {
+      temp_text.push({position:[player_position[0],player_position[1],player_position[2]+1.75],text:local_message,kind:"chat"});
+    }
+  }
 
   for(var id in peers) {
     var peer=peers[id];
     var pos=peer.position;
     if(!pos || pos.length<3) continue;
     var c=peer.color || color_from_id(id);
-    box(out,[pos[0],pos[1],pos[2]-.48],[.85,.85,1.65],c);
-    box(out,[pos[0]-.03,pos[1],pos[2]+.58],[.64,.64,.64],shade(c,1.05));
+    add_avatar(out,pos,c);
     temp_text.push({position:[pos[0],pos[1],pos[2]+1.15],text:peer.name || "visitor",kind:"name"});
     if(peer.message && performance.now()<peer.messageUntil) {
       temp_text.push({position:[pos[0],pos[1],pos[2]+1.72],text:peer.message,kind:"chat"});
@@ -354,7 +403,7 @@ function append_message(who,msg,system) {
 }
 
 function state_packet(type) {
-  return {type:type||"state",user_id:user_id,name:name,position:camera.position.slice(),color:color_from_id(user_id),t:Date.now()};
+  return {type:type||"state",user_id:user_id,name:name,position:player_position.slice(),color:color_from_id(user_id),t:Date.now()};
 }
 
 function receive_packet(data,transport) {
@@ -397,6 +446,9 @@ function send() {
   if(!msg) return;
   input.value="";
   append_message(name,msg,false);
+  local_message=msg;
+  local_message_until=performance.now()+8000;
+  rebuild_scene();
   var data=state_packet("chat");
   data.message=msg;
   broadcast_local(data);
@@ -472,6 +524,8 @@ function enter_lobby() {
   localStorage.setItem("3dchat-name",name);
   document.getElementById("join").style.display="none";
   entered=true;
+  update_camera_follow();
+  rebuild_scene();
   append_message("", "Welcome to My Lobby. This entire 3D scene is rendered by the original custom WebGL engine.", true);
   connect_network();
   send_state(true);
@@ -482,21 +536,10 @@ function loop() {
     gl.clearColor(.018,.029,.045,1);
     gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
 
-    var moved=down[87]||down[83]||down[68]||down[65];
-    camera.shift(
-      v_add_v(
-        v_add_v(
-          s_mult_v(camera.move_speed*down[87],camera.axes[2]),
-          s_mult_v(-camera.move_speed*down[83],camera.axes[2])
-        ),
-        v_add_v(
-          s_mult_v(camera.move_speed*down[68],camera.axes[0]),
-          s_mult_v(-camera.move_speed*down[65],camera.axes[0])
-        )
-      )
-    );
+    var moved=move_player();
     camera.rotate_ki(down[39]-down[37]);
     camera.rotate_jk(down[38]-down[40]);
+    update_camera_follow();
     camera.send_values_to_shader();
 
     gl.drawArrays(gl.TRIANGLES,0,vertices.length/6);
@@ -510,6 +553,10 @@ function loop() {
     }
 
     var changed=false;
+    if(local_message && now>=local_message_until) {
+      local_message="";
+      changed=true;
+    }
     for(var id in peers) {
       if(peers[id].message && now>=peers[id].messageUntil) {
         peers[id].message="";
@@ -538,6 +585,7 @@ window.addEventListener("load",function(){
     setup_text_canvas();
     setup_controls();
     camera=new Camera();
+    update_camera_follow();
     build_world();
     rebuild_scene();
 
