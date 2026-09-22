@@ -21,8 +21,13 @@ var lastHeartbeat = 0;
 var player_position = [8, 0, 0.35];
 var local_message = "";
 var local_message_until = 0;
-var follow_distance = 4.4;
-var follow_height = 1.15;
+var follow_distance = 6.2;
+var orbit_yaw = Math.PI;
+var orbit_pitch = 0.30;
+var last_frame_time = performance.now();
+var pointer_look = false;
+var pointer_x = 0;
+var pointer_y = 0;
 
 class Camera {
   constructor(position=[8, 0, 0.35], axes=[[0, 1, 0], [0, 0, -1], [-1, 0, 0]], focal_length=2, move_speed=.11, rot_speed=.035) {
@@ -66,7 +71,7 @@ class Camera {
 
 function gl_setup() {
   canvas = document.getElementById("canvas");
-  gl = canvas.getContext("webgl", {antialias:true}) || canvas.getContext("experimental-webgl");
+  gl = canvas.getContext("webgl", {antialias:true, alpha:true}) || canvas.getContext("experimental-webgl", {alpha:true});
   if (!gl) throw new Error("WebGL is not available in this browser");
 
   resize();
@@ -181,29 +186,57 @@ function m_mult_v(m,v) {
 
 function clamp(n,a,b){ return Math.max(a,Math.min(b,n)); }
 
-function horizontal_unit(v) {
-  var d=Math.sqrt(v[0]*v[0]+v[1]*v[1]);
-  if(d<0.0001) return [0,0,0];
-  return [v[0]/d,v[1]/d,0];
+function length3(v) {
+  return Math.sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]);
+}
+
+function normalize3(v) {
+  var d=length3(v);
+  if(d<0.000001) return [0,0,0];
+  return [v[0]/d,v[1]/d,v[2]/d];
+}
+
+function cross(a,b) {
+  return [a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
 }
 
 function update_camera_follow() {
-  var f=horizontal_unit(camera.axes[2]);
-  camera.position=[
-    player_position[0]-f[0]*follow_distance,
-    player_position[1]-f[1]*follow_distance,
-    player_position[2]+follow_height
+  orbit_pitch=clamp(orbit_pitch,-0.05,0.78);
+  follow_distance=clamp(follow_distance,3.8,10);
+
+  var cp=Math.cos(orbit_pitch);
+  var forward=[
+    Math.cos(orbit_yaw)*cp,
+    Math.sin(orbit_yaw)*cp,
+    -Math.sin(orbit_pitch)
   ];
+
+  var target=[player_position[0],player_position[1],player_position[2]+0.20];
+  camera.position=[
+    target[0]-forward[0]*follow_distance,
+    target[1]-forward[1]*follow_distance,
+    target[2]-forward[2]*follow_distance
+  ];
+
+  var right=normalize3(cross(forward,[0,0,1]));
+  var down=normalize3(cross(forward,right));
+  camera.axes=[right,down,normalize3(forward)];
 }
 
-function move_player() {
-  var f=horizontal_unit(camera.axes[2]);
-  var r=horizontal_unit(camera.axes[0]);
-  var dx=(f[0]*(down[87]-down[83])+r[0]*(down[68]-down[65]))*camera.move_speed;
-  var dy=(f[1]*(down[87]-down[83])+r[1]*(down[68]-down[65]))*camera.move_speed;
-  if(dx||dy) {
-    player_position[0]=clamp(player_position[0]+dx,-42,42);
-    player_position[1]=clamp(player_position[1]+dy,-42,42);
+function move_player(dt) {
+  var forward=[Math.cos(orbit_yaw),Math.sin(orbit_yaw),0];
+  var right=[-Math.sin(orbit_yaw),Math.cos(orbit_yaw),0];
+  var forwardInput=down[87]-down[83];
+  var sideInput=down[68]-down[65];
+  var dx=forward[0]*forwardInput+right[0]*sideInput;
+  var dy=forward[1]*forwardInput+right[1]*sideInput;
+  var mag=Math.sqrt(dx*dx+dy*dy);
+
+  if(mag>0) {
+    dx/=mag; dy/=mag;
+    var speed=5.0;
+    player_position[0]=clamp(player_position[0]+dx*speed*dt,-42,42);
+    player_position[1]=clamp(player_position[1]+dy*speed*dt,-42,42);
     rebuild_scene();
     return true;
   }
@@ -516,6 +549,29 @@ function setup_controls() {
     el.addEventListener("pointercancel",off);
     el.addEventListener("pointerleave",off);
   });
+
+  canvas.addEventListener("pointerdown",function(e){
+    if(!entered) return;
+    pointer_look=true;
+    pointer_x=e.clientX;
+    pointer_y=e.clientY;
+    if(canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
+  });
+
+  canvas.addEventListener("pointermove",function(e){
+    if(!pointer_look||!entered) return;
+    orbit_yaw-=(e.clientX-pointer_x)*0.006;
+    orbit_pitch=clamp(orbit_pitch+(e.clientY-pointer_y)*0.004,-0.05,0.78);
+    pointer_x=e.clientX;
+    pointer_y=e.clientY;
+  });
+
+  canvas.addEventListener("pointerup",function(){ pointer_look=false; });
+  canvas.addEventListener("pointercancel",function(){ pointer_look=false; });
+  canvas.addEventListener("wheel",function(e){
+    follow_distance=clamp(follow_distance+e.deltaY*0.006,3.8,10);
+    e.preventDefault();
+  },{passive:false});
 }
 
 function enter_lobby() {
@@ -533,19 +589,24 @@ function enter_lobby() {
 
 function loop() {
   try {
-    gl.clearColor(.018,.029,.045,1);
+    var nowFrame=performance.now();
+    var dt=Math.min((nowFrame-last_frame_time)/1000,0.05);
+    last_frame_time=nowFrame;
+
+    gl.clearColor(0,0,0,0);
     gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
 
-    var moved=move_player();
-    camera.rotate_ki(down[39]-down[37]);
-    camera.rotate_jk(down[38]-down[40]);
+    orbit_yaw+=(down[37]-down[39])*1.75*dt;
+    orbit_pitch=clamp(orbit_pitch+(down[40]-down[38])*1.15*dt,-0.05,0.78);
+
+    var moved=move_player(dt);
     update_camera_follow();
     camera.send_values_to_shader();
 
     gl.drawArrays(gl.TRIANGLES,0,vertices.length/6);
     draw_text();
 
-    var now=performance.now();
+    var now=nowFrame;
     if(entered && (moved||down[37]||down[38]||down[39]||down[40])) send_state(false);
     if(entered && now-lastHeartbeat>1800) {
       lastHeartbeat=now;
